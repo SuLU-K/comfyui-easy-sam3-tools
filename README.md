@@ -1,29 +1,26 @@
 # comfyui-nodes-test
 
-Small collection of custom nodes used while experimenting with ComfyUI SAM3-based workflows.
+![SAM3 Interactive BBox Editor](assets/image.png)
+
+Custom nodes for building SAM3-centric editing pipelines inside ComfyUI. They pair well with **easy-sam3**, letting you harness SAM3’s zero-shot segmentation accuracy for precise masks that can drive local repainting, matting, or any downstream compositing task.
 
 ## Nodes
 
 | Node | Description |
 | ---- | ----------- |
-| `SimpleMultiple` | Minimal INT×FLOAT example, kept as a template for quick testing. |
-| `Sam3MaskRangeSelector` | Takes the ordered `obj_masks` tensor from SAM3 segmentation, selects a slice (`take_start`, `take_count`) and merges it into a single mask per frame. |
-| `Sam3DrawBBox` | Draws KJ-style bounding boxes (from SAM3 or VLM tools) over images, handling stringified JSON, `boxes` payloads, tensor lists, or per-batch structures. |
-| `Sam3InteractiveBBoxEditor` | Full interactive canvas node: previews the connected image, lets you draw/move/resize boxes with the mouse, and outputs KJ-format boxes plus the passthrough image. |
+| `SimpleMultiple` | Minimal INT×FLOAT demo node. Useful as a boilerplate when authoring new operators. |
+| `Sam3MaskRangeSelector` | Consumes ordered SAM3 `obj_masks`, extracts a configurable slice (`take_start`, `take_count`), and merges the selection into a single mask per frame for focused edits. |
+| `Sam3DrawBBox` | Renders SAM3 / VLM bounding boxes over image tensors. Accepts JSON strings, `{boxes: [...]}` payloads, tensors, or per-batch lists, normalizes them, then emits an overlayed tensor. |
+| `Sam3InteractiveBBoxEditor` | DOM-based bbox editor widget. Streams the upstream image, lets you author/adjust boxes interactively, and outputs KJ-format bounds alongside the passthrough image for subsequent SAM3 inference. |
 
 ### Interactive BBox editor
 
-- Connect any `IMAGE` tensor to the node. The preview auto-resizes like the stock Preview node while keeping coordinates in original resolution.
+- Connect any `IMAGE` tensor to the node. The preview auto-resizes like the stock Preview node while preserving original-resolution coordinates.
 - Draw boxes with left-click drag, move them by dragging inside, resize via corner handles, delete with the toolbar button or the Delete key.
 - The node emits the selected boxes as `[{startX,startY,endX,endY}]`, ready for SAM3 segmentation or `Sam3DrawBBox`.
 
 ## Installation
 
-Drop the folder inside `ComfyUI/custom_nodes/`, then restart ComfyUI. The `web/` directory is auto-registered via `WEB_DIRECTORY`, so the interactive widget loads without extra steps.
+Drop the folder inside `ComfyUI/custom_nodes/`, then restart ComfyUI.
 
-## Development notes
-
-- The code sticks to ASCII and uses `apply_patch`-friendly formatting.
-- All UI work lives under `web/bbox_editor.js`. Update it alongside backend changes and restart ComfyUI’s server + browser to reload.
-
-MIT license applies. Contributions welcome.***
+MIT license applies. Contributions welcome.
