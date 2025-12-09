@@ -1,7 +1,12 @@
 import { app } from "../../scripts/app.js";
 
-const HANDLE_SIZE = 8;
+const HANDLE_SIZE = 5;
 const MIN_SIZE = 6;
+const NODE_CHROME_HEIGHT = 90;
+const MIN_WIDGET_HEIGHT = 150;
+const FOOTER_HEIGHT = 10;
+const MAX_DISPLAY_EDGE = 640;
+const MAX_OVERSAMPLE = 4;
 
 function hideWidget(widget) {
     if (!widget) return;
@@ -18,13 +23,15 @@ function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
-function toCanvasCoords(canvas, event) {
+function toCanvasCoords(canvas, event, state) {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const width = rect.width || 1;
+    const height = rect.height || 1;
+    const previewWidth = state?.previewSize?.width || width;
+    const previewHeight = state?.previewSize?.height || height;
     return {
-        x: (event.clientX - rect.left) * scaleX,
-        y: (event.clientY - rect.top) * scaleY,
+        x: ((event.clientX - rect.left) / width) * previewWidth,
+        y: ((event.clientY - rect.top) / height) * previewHeight,
     };
 }
 
@@ -134,10 +141,14 @@ function hitTestBoxes(boxes, px, py) {
 
 function attachEditor(node, widget) {
     const container = document.createElement("div");
-    container.style.cssText = "position: relative; width: 100%; background: #111; border-radius: 6px; border: 1px solid #222; overflow: hidden; display: flex; flex-direction: column; gap: 4px;";
+    container.style.cssText = `position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; gap: 2px; box-sizing: border-box; padding-bottom: ${FOOTER_HEIGHT}px;`;
+
+    const shell = document.createElement("div");
+    shell.style.cssText = "flex: 1; min-height: 0; display: flex; flex-direction: column; background: #141519; border: 1px solid #2a2c33; border-radius: 8px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.24);";
+    container.appendChild(shell);
 
     const toolbar = document.createElement("div");
-    toolbar.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: #1b1c1f; border-bottom: 1px solid #222; font-size: 12px; color: #bbb;";
+    toolbar.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: #1b1c1f; border-bottom: 1px solid #232429; font-size: 12px; color: #bbb;";
     toolbar.innerHTML = "<span>Click & drag to draw a box. Drag edges/handles to adjust.</span>";
 
     const toolbarButtons = document.createElement("div");
@@ -174,17 +185,24 @@ function attachEditor(node, widget) {
     toolbarButtons.appendChild(clearBtn);
     toolbarButtons.appendChild(deleteBtn);
     toolbar.appendChild(toolbarButtons);
-    container.appendChild(toolbar);
+    shell.appendChild(toolbar);
 
     const canvasWrapper = document.createElement("div");
-    canvasWrapper.style.cssText = "flex: 1; display: flex; align-items: center; justify-content: center; background: #0d0e10; padding: 6px;";
+    canvasWrapper.style.cssText = "flex: 1; min-height: 120px; display: flex; align-items: center; justify-content: center; background: #17181d;";
 
     const canvas = document.createElement("canvas");
     canvas.width = 512;
     canvas.height = 512;
-    canvas.style.cssText = "max-width: 100%; max-height: 100%; cursor: crosshair; background: #0d0e10;";
+    canvas.style.cssText = "max-width: 100%; max-height: 100%; cursor: crosshair; background: transparent; image-rendering: crisp-edges;";
     canvasWrapper.appendChild(canvas);
-    container.appendChild(canvasWrapper);
+    shell.appendChild(canvasWrapper);
+
+    const infoBar = document.createElement("div");
+    infoBar.style.cssText = `position: absolute; left: 0; right: 0; bottom: 0; height: ${FOOTER_HEIGHT}px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: monospace; letter-spacing: 0.1em; color: #cbd0dc; background: rgba(0, 0, 0, 0.35); border-top: 1px solid #191a1f;`;
+    const resolutionLabel = document.createElement("span");
+    resolutionLabel.textContent = "-- x --";
+    infoBar.appendChild(resolutionLabel);
+    container.appendChild(infoBar);
 
     const ctx = canvas.getContext("2d");
 
@@ -192,6 +210,8 @@ function attachEditor(node, widget) {
         canvas,
         ctx,
         widget,
+        shell,
+        canvasWrapper,
         boxes: parseBoxes(widget?.value),
         selected: -1,
         action: null,
@@ -199,6 +219,13 @@ function attachEditor(node, widget) {
         previewSize: { width: canvas.width, height: canvas.height },
         originalSize: { width: canvas.width, height: canvas.height },
         scale: 1,
+        pixelRatio: window.devicePixelRatio || 1,
+        renderScale: { x: 1, y: 1 },
+        layoutChrome: NODE_CHROME_HEIGHT,
+        minWidgetHeight: MIN_WIDGET_HEIGHT,
+        info: {
+            resolution: resolutionLabel,
+        },
         toDisplayBox(box) {
             const scale = this.scale || 1;
             return {
@@ -233,6 +260,71 @@ function attachEditor(node, widget) {
                 h: box.h * inv,
             };
         },
+        updateResolutionLabel() {
+            const label = this.info?.resolution;
+            if (!label) {
+                return;
+            }
+            const width = this.originalSize?.width;
+            const height = this.originalSize?.height;
+            if (width && height) {
+                label.textContent = `${width} x ${height}`;
+            } else {
+                label.textContent = "-- x --";
+            }
+        },
+        applyLayout(size) {
+            const nodeHeight = Array.isArray(size) ? size[1] : node.size ? node.size[1] : 0;
+            const available = nodeHeight ? Math.max(0, nodeHeight - this.layoutChrome) : this.minWidgetHeight;
+            const height = Math.max(this.minWidgetHeight, available);
+            container.style.height = `${height}px`;
+            const footerHeight = FOOTER_HEIGHT;
+            const shellHeight = Math.max(96, height - footerHeight);
+            shell.style.height = `${shellHeight}px`;
+            shell.style.minHeight = `${shellHeight}px`;
+            this.updateCanvasLayout();
+            return height;
+        },
+        updateCanvasLayout() {
+            if (!this.canvasWrapper) {
+                return;
+            }
+            const wrapperWidth = this.canvasWrapper.clientWidth || this.previewSize.width || this.canvas.width;
+            const wrapperHeight = this.canvasWrapper.clientHeight || this.previewSize.height || this.canvas.height;
+            if (!wrapperWidth || !wrapperHeight) {
+                return;
+            }
+            const sourceWidth = this.originalSize?.width || wrapperWidth;
+            const sourceHeight = this.originalSize?.height || wrapperHeight;
+            const aspect = sourceWidth > 0 && sourceHeight > 0 ? sourceWidth / sourceHeight : 1;
+            const maxWidth = Math.min(wrapperWidth, MAX_DISPLAY_EDGE, sourceWidth || wrapperWidth);
+            const maxHeight = Math.min(wrapperHeight, MAX_DISPLAY_EDGE, sourceHeight || wrapperHeight);
+            let displayWidth = maxWidth;
+            let displayHeight = displayWidth / aspect;
+            if (displayHeight > maxHeight) {
+                displayHeight = maxHeight;
+                displayWidth = displayHeight * aspect;
+            }
+            displayWidth = Math.max(80, Math.round(displayWidth));
+            displayHeight = Math.max(80, Math.round(displayHeight));
+
+            const sourceSpanWidth = sourceWidth || displayWidth;
+            const sourceSpanHeight = sourceHeight || displayHeight;
+            const oversampleX = Math.max(1, Math.min(MAX_OVERSAMPLE, sourceSpanWidth / displayWidth));
+            const oversampleY = Math.max(1, Math.min(MAX_OVERSAMPLE, sourceSpanHeight / displayHeight));
+            const pixelRatio = window.devicePixelRatio || 1;
+            this.pixelRatio = pixelRatio;
+            const actualWidth = Math.max(1, Math.round(displayWidth * oversampleX * pixelRatio));
+            const actualHeight = Math.max(1, Math.round(displayHeight * oversampleY * pixelRatio));
+            this.canvas.width = actualWidth;
+            this.canvas.height = actualHeight;
+            this.canvas.style.width = `${displayWidth}px`;
+            this.canvas.style.height = `${displayHeight}px`;
+            this.previewSize = { width: displayWidth, height: displayHeight };
+            this.renderScale = { x: oversampleX, y: oversampleY };
+            this.scale = sourceWidth ? displayWidth / sourceWidth : 1;
+            this.draw();
+        },
         save() {
             if (this.widget) {
                 this.widget.value = serializeBoxes(this.boxes);
@@ -251,40 +343,54 @@ function attachEditor(node, widget) {
             const img = new Image();
             img.onload = () => {
                 this.image = img;
-                this.originalSize = { width: img.width, height: img.height };
-                const maxDim = 640;
-                const longest = Math.max(img.width, img.height);
-                const scale = longest > maxDim ? maxDim / longest : 1;
-                const displayWidth = Math.max(64, Math.round(img.width * scale));
-                const displayHeight = Math.max(64, Math.round(img.height * scale));
-                this.scale = scale;
-                this.previewSize = { width: displayWidth, height: displayHeight };
-                this.canvas.width = displayWidth;
-                this.canvas.height = displayHeight;
-                this.draw();
+                const payloadWidth = typeof payload.width === "number" ? payload.width : img.naturalWidth || img.width;
+                const payloadHeight = typeof payload.height === "number" ? payload.height : img.naturalHeight || img.height;
+                this.originalSize = {
+                    width: payloadWidth || img.width,
+                    height: payloadHeight || img.height,
+                };
+                this.updateResolutionLabel();
+                this.updateCanvasLayout();
             };
             img.src = `data:image/png;base64,${base64}`;
         },
         draw() {
-            const { canvas, ctx, boxes, selected, image } = this;
+            const { canvas, ctx, boxes, selected, image, previewSize, pixelRatio, renderScale } = this;
+            const ratio = pixelRatio || 1;
+            const displayWidth = Math.max(1, previewSize?.width || canvas.width / ratio);
+            const displayHeight = Math.max(1, previewSize?.height || canvas.height / ratio);
+            const scaleX = (renderScale?.x || 1) * ratio;
+            const scaleY = (renderScale?.y || 1) * ratio;
+
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+
             if (image) {
-                ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(image, 0, 0, displayWidth, displayHeight);
+                ctx.imageSmoothingEnabled = true;
             } else {
                 ctx.fillStyle = "#15161a";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, displayWidth, displayHeight);
                 ctx.fillStyle = "#5c5d63";
                 ctx.font = "16px sans-serif";
                 ctx.textAlign = "center";
-                ctx.fillText("Connect an image input to start drawing boxes", canvas.width / 2, canvas.height / 2);
+                ctx.fillText("Connect an image input to start drawing boxes", displayWidth / 2, displayHeight / 2);
             }
 
             const displayBoxes = boxes.map((box) => this.toDisplayBox(box));
+            const dashScale = Math.max(scaleX, scaleY);
+            const strokeWidth = 2 / dashScale;
+            const dashPattern = [6 / dashScale, 4 / dashScale];
+            const handleWidth = HANDLE_SIZE * 2;
+            const handleHeight = HANDLE_SIZE * 2;
 
             displayBoxes.forEach((box, index) => {
                 const color = index === selected ? "#ff9800" : "#3ab0ff";
                 ctx.strokeStyle = color;
-                ctx.lineWidth = 2;
+                ctx.lineWidth = strokeWidth;
                 ctx.strokeRect(box.x, box.y, box.w, box.h);
 
                 if (index === selected) {
@@ -293,19 +399,21 @@ function attachEditor(node, widget) {
                     ctx.fillStyle = "#fff";
                     const handles = createHandleRects(box);
                     handles.forEach((handle) => {
-                        ctx.fillRect(handle.x, handle.y, HANDLE_SIZE * 2, HANDLE_SIZE * 2);
+                        ctx.fillRect(handle.x, handle.y, handleWidth, handleHeight);
                     });
                 }
             });
 
             if (this.action && this.action.type === "draw" && this.action.current) {
                 ctx.strokeStyle = "#ff9800";
-                ctx.setLineDash([6, 4]);
+                ctx.setLineDash(dashPattern);
                 const currentDisplay = this.toDisplayBox(this.action.current);
                 const b = currentDisplay;
                 ctx.strokeRect(b.x, b.y, b.w, b.h);
                 ctx.setLineDash([]);
             }
+
+            ctx.restore();
         },
     };
 
@@ -313,17 +421,14 @@ function attachEditor(node, widget) {
 
     const domWidget = node.addDOMWidget("bbox", "sam3-bbox", container);
     domWidget.computeSize = (width) => {
-        const nodeHeight = node.size ? node.size[1] : 460;
-        const height = Math.max(260, nodeHeight - 140);
-        container.style.height = `${height}px`;
+        const height = state.applyLayout(node.size);
         return [width, height];
     };
 
     const originalResize = node.onResize;
     node.onResize = function (size) {
         originalResize?.apply(this, arguments);
-        const height = Math.max(260, size[1] - 140);
-        container.style.height = `${height}px`;
+        state.applyLayout(size);
     };
 
     const startAction = (action) => {
@@ -349,7 +454,7 @@ function attachEditor(node, widget) {
     const handleMouseDown = (event) => {
         event.preventDefault();
         const { canvas, boxes } = state;
-        const coords = toCanvasCoords(canvas, event);
+        const coords = toCanvasCoords(canvas, event, state);
         const displayBoxes = boxes.map((box) => state.toDisplayBox(box));
         const handleHit = hitTestHandles(displayBoxes, coords.x, coords.y);
         if (handleHit) {
@@ -395,7 +500,7 @@ function attachEditor(node, widget) {
     const handleMouseMove = (event) => {
         if (!state.action) return;
         const { canvas, boxes, action } = state;
-        const coords = toCanvasCoords(canvas, event);
+        const coords = toCanvasCoords(canvas, event, state);
 
         if (action.type === "draw") {
             const actualCoords = state.toActualCoords(coords);
@@ -482,6 +587,9 @@ function attachEditor(node, widget) {
     });
 
     state.draw();
+    state.updateResolutionLabel();
+    state.applyLayout();
+    requestAnimationFrame(() => state.updateCanvasLayout());
 }
 
 app.registerExtension({
