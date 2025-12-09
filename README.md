@@ -1,4 +1,4 @@
-# comfyui-nodes-test
+# comfyui-easy-sam3-tools
 
 ![SAM3 Interactive BBox Editor](assets/image.png)
 
