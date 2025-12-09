@@ -2,7 +2,7 @@
 
 ![SAM3 Interactive BBox Editor](assets/image.png)
 
-Custom nodes for building SAM3-centric editing pipelines inside ComfyUI. They pair well with **comfyui-easy-sam3** and ** comfyui-kjnodes**, letting you harness SAM3’s zero-shot segmentation accuracy for precise masks that can drive local inpainting, editing, or any downstream compositing task.
+Custom nodes for building SAM3-centric editing pipelines inside ComfyUI. They pair well with **comfyui-easy-sam3** and **comfyui-kjnodes**, letting you harness SAM3’s zero-shot segmentation accuracy for precise masks that can drive local inpainting, editing, or any downstream compositing task.
 
 ## Nodes
 
