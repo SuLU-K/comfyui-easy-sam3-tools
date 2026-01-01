@@ -71,10 +71,32 @@ class Sam3MaskRangeSelector:
         if isinstance(obj_masks, torch.Tensor):
             tensor = obj_masks
         elif isinstance(obj_masks, (list, tuple)):
-            tensor = torch.stack([
-                m if isinstance(m, torch.Tensor) else torch.tensor(m)
-                for m in obj_masks
-            ])
+            if len(obj_masks) == 0:
+                raise ValueError("obj_masks is empty")
+
+            # Upstream nodes are inconsistent about whether they emit:
+            # - a 4D tensor: [B, N, H, W]
+            # - a list of per-object 3D tensors: N * [B, H, W]
+            # - a list of per-frame 3D arrays: B * [N, H, W]
+            #
+            # Prefer treating a list of torch tensors as per-object masks, since that
+            # is the common shape that can otherwise get misinterpreted as [N, B, H, W].
+            if all(isinstance(m, torch.Tensor) for m in obj_masks):
+                elems = []
+                for m in obj_masks:
+                    t = m
+                    if t.dim() == 2:
+                        t = t.unsqueeze(0)  # [1, H, W]
+                    elems.append(t)
+                if all(t.dim() == 3 for t in elems) and all(t.shape == elems[0].shape for t in elems):
+                    tensor = torch.stack(elems, dim=1)  # [B, N, H, W]
+                else:
+                    tensor = torch.stack(elems, dim=0)
+            else:
+                tensor = torch.stack([
+                    m if isinstance(m, torch.Tensor) else torch.tensor(m)
+                    for m in obj_masks
+                ])
         else:
             tensor = torch.tensor(obj_masks)
 
@@ -87,6 +109,11 @@ class Sam3MaskRangeSelector:
 
         if tensor.dim() != 4:
             raise ValueError(f"obj_masks must be a 4D tensor, got shape {tensor.shape}")
+
+        # Normalize common swapped layout [N, B, H, W] -> [B, N, H, W]
+        # (often happens when upstream emits a list of per-object [B, H, W] masks).
+        if tensor.shape[0] > 1 and tensor.shape[1] == 1:
+            tensor = tensor.permute(1, 0, 2, 3).contiguous()
 
         return tensor.float()
 
