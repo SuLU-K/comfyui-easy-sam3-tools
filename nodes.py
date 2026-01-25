@@ -442,3 +442,156 @@ class Sam3InteractiveBBoxEditor:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+
+def _to_int(value, default=None):
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_xy(x, y, width, height):
+    if x is None or y is None:
+        return None, None
+
+    try:
+        x = float(x)
+        y = float(y)
+    except (TypeError, ValueError):
+        return None, None
+
+    if width and height and (x > 1.5 or y > 1.5):
+        if width > 0:
+            x = x / float(width)
+        if height > 0:
+            y = y / float(height)
+
+    return x, y
+
+
+def _meta_to_pose_keypoint(meta):
+    if not isinstance(meta, dict):
+        return None
+
+    width = _to_int(meta.get("width"), default=512) or 512
+    height = _to_int(meta.get("height"), default=512) or 512
+
+    keypoints_body = meta.get("keypoints_body")
+    if keypoints_body is None:
+        return None
+
+    if isinstance(keypoints_body, np.ndarray):
+        points = [row for row in keypoints_body]
+    elif isinstance(keypoints_body, list):
+        points = keypoints_body
+    else:
+        return None
+
+    flat = [0.0] * 54  # 18 * (x, y, confidence)
+    for i in range(min(18, len(points))):
+        kp = points[i]
+        if kp is None:
+            continue
+
+        if isinstance(kp, np.ndarray):
+            kp = kp.tolist()
+
+        if not isinstance(kp, (list, tuple)) or len(kp) < 2:
+            continue
+
+        x, y = kp[0], kp[1]
+        conf = kp[2] if len(kp) >= 3 else 1.0
+
+        x, y = _normalize_xy(x, y, width, height)
+        if x is None or y is None:
+            continue
+
+        try:
+            conf = float(conf)
+        except (TypeError, ValueError):
+            conf = 0.0
+
+        base = i * 3
+        flat[base] = float(x)
+        flat[base + 1] = float(y)
+        flat[base + 2] = float(conf)
+
+    return {
+        "canvas_width": int(width),
+        "canvas_height": int(height),
+        "width": int(width),
+        "height": int(height),
+        "people": [{"pose_keypoints_2d": flat}],
+    }
+
+
+class ConvertPoseDataToPosePoint:
+    """Convert PoseAndFaceDetection POSEDATA into OpenPose-Editor POSE_KEYPOINT."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pose_data": ("POSEDATA", {"forceInput": True}),
+            }
+        }
+
+    RETURN_TYPES = ("POSE_KEYPOINT",)
+    RETURN_NAMES = ("pose_point",)
+    FUNCTION = "convert"
+    CATEGORY = "Test Nodes/Pose"
+
+    def convert(self, pose_data):
+        if not isinstance(pose_data, dict):
+            raise ValueError("pose_data must be a dict (POSEDATA)")
+
+        metas = pose_data.get("pose_metas_original")
+        if metas is None:
+            metas = pose_data.get("pose_metas")
+
+        if not isinstance(metas, list) or len(metas) == 0:
+            raise ValueError("pose_data has no pose metas to convert")
+
+        pose_point = []
+        for meta in metas:
+            converted = _meta_to_pose_keypoint(meta)
+            if converted is not None:
+                pose_point.append(converted)
+
+        if len(pose_point) == 0:
+            raise ValueError("failed to convert pose metas into POSE_KEYPOINT format")
+
+        return (pose_point,)
+
+
+class PosePointSelector:
+    """Select a single frame from a POSE_KEYPOINT sequence."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pose_point": ("POSE_KEYPOINT", {"forceInput": True}),
+                "frame_index": ("INT", {"default": 0, "min": 0, "max": 4096}),
+            }
+        }
+
+    RETURN_TYPES = ("POSE_KEYPOINT", "INT")
+    RETURN_NAMES = ("pose_point", "selected_index")
+    FUNCTION = "select"
+    CATEGORY = "Test Nodes/Pose"
+
+    def select(self, pose_point, frame_index):
+        if not isinstance(pose_point, list) or len(pose_point) == 0:
+            raise ValueError("pose_point must be a non-empty list (POSE_KEYPOINT)")
+
+        try:
+            idx = int(frame_index)
+        except (TypeError, ValueError):
+            idx = 0
+
+        idx = max(0, min(idx, len(pose_point) - 1))
+        return ([pose_point[idx]], idx)
